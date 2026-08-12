@@ -10,8 +10,8 @@
 2. 按顺序运行 Notebook。
 3. 选择音频或视频。
 4. 设置语言、热词和预期说话人数。
-5. 下载字幕或诊断包。
+5. 下载与视频同名的 SRT/ASS 或诊断包。
 
-预期说话人数只用于诊断，不限制实际人数。ClearVoice 默认关闭。
+预期说话人数：留空为自动；整数 1–99 会把最终说话人固定为该数量（检测到的人数不足时不虚构，保留实际人数并记录警告）；`8+` 表示至少 8 人。热词预设（原神/星铁）已扩充为游戏内专有名词（概念、地名、人名及日语声优名）。ClearVoice 默认关闭。
 
 详细架构和验证要求见 [docs/architecture.md](docs/architecture.md) 与 [docs/runbooks/notebook-validation.md](docs/runbooks/notebook-validation.md)。
