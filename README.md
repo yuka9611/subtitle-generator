@@ -2,63 +2,52 @@
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/yuka9611/subtitle-generator/blob/main/subtitle_generator.ipynb)
 
-Google Colab 字幕生成 Notebook，主流程使用 faster-whisper、Qwen Forced Align 和自动说话人识别，导出 SRT、ASS 与诊断产物。执行源只有 subtitle_generator.ipynb；脚本和文档不能替代 Notebook 的实际执行顺序。
+Google Colab 字幕生成 Notebook。`subtitle_generator.ipynb` 是唯一执行源码；脚本只用于保持 Notebook 序列化、静态检查和合成验证，不能替代 Colab 运行顺序。
 
-## 普通模式
+## 当前流程
 
-普通参数单元只显示四个输入：
+```text
+输入媒体
+  -> FFmpeg 16 kHz mono PCM audio_reference.wav
+  -> Silero CPU activity / 自然边界 / 风险诊断
+  -> 可选 ClearVoice 独立子环境 WAV A/B
+  -> MOSS-Transcribe-Diarize ASR + speaker + 粗时间戳
+  -> 严格 parser -> NormalizedSegment
+  -> whole/chunk 去重 -> 证据图 speaker stitching
+  -> Qwen3-ForcedAligner 原生 Transformers 对齐
+  -> words 通用后处理 -> SRT/ASS + diagnostics ZIP
+```
 
-| 输入 | 默认值 | 说明 |
+`audio_reference.wav` 是全局时间基准。`VAD_AUDIO_FILE` 和 `ALIGN_AUDIO_FILE` 永远指向 reference；`MOSS_AUDIO_FILE` 默认也指向 reference，只有通过 ClearVoice 采样率、长度漂移和基础质量门槛后才允许替换。ClearVoice 默认关闭，子环境通过 WAV 交换，不能改变 reference 时间轴。
+
+普通 UI 只显示四个输入：
+
+| 输入 | 默认值 | 作用 |
 |---|---|---|
-| 语言 | ja | 识别语言 |
-| 热词预设 | 原神 | 原神、星铁、无或自定义 |
-| 自定义热词 | 空 | 使用自定义预设时填写 |
-| 已知说话人数 | 空 | 空值自动估计；精确整数 1–10 |
+| 语言 | `ja` | prompt 与对齐诊断提示 |
+| 热词预设 | `原神` | 生成 prompt 中的热词提示 |
+| 自定义热词 | 空 | 只以 hash 进入 fingerprint，明文不进入 compact 产物 |
+| 预期说话人数 | 空 | 仅用于诊断，不限制 MOSS 说话人数量 |
 
-普通用户不需要选择 Whisper、beam、ASS 单行、词级回退、音频预处理、重叠分离、diarization 后端、场景、chunk 或边界阈值。内部固定自动策略为：
+speaker ID 与 ASS 样式动态生成，覆盖 2、3、4、5–6、8+ 人。whole-audio 优先；当前 85 分钟是待新鲜 T4 基准确认的候选上限，不是已验收承诺。超限、OOM 或已知截断时使用初始 45 分钟块、75 秒重叠，并在 45 秒范围内搜索 Silero 自然边界。分块去重与 speaker mapping 分离；mapping 使用时间 IoU、重叠文本和轮次上下文证据，确定性 Hungarian 证据不足时创建新的 uncertain global speaker，绝不按局部数字直接拼接。
 
-- CUDA 总显存至少 14 GiB：large-v3 / beam 5；低于 14 GiB：large-v3-turbo / beam 3。
-- 没有 CUDA 时在模型流水线开始前停止，并提示启用 Colab GPU；不会静默运行完整 CPU 流程。
-- 300 秒以上音频自动采用 300 秒块、25 秒重叠、20 秒边界搜索和 180 秒最小块。
-- 人数为空时使用 hybrid 自动估计，不向两个后端注入人数上限；填写 1 时跳过实际 diarization 并保留统一 speaker 时间轴；填写 2–4 时同时作为 pyannote 与 NeMo 的固定人数。
-- 固定 5–10 人仍使用 hybrid；精确人数同时传给 pyannote `num_speakers`、NeMo manifest `num_speakers` 与 clustering oracle，并走明确的 `crowded_clustering`（NeMo 默认 clustering，不默认进入 MSDD）。
-- diarization 与全局 stitch 完成后，先记录有效全局人数和 `_calc_rttm_risk`，再决定字幕 profile：5–10 人低切换风险沿用可读型 `multi4`，只有高风险才使用 `crowded`；不会因为总人数大于 4 就无条件使用激进密度参数。
-- pyannote 与 NeMo 按 hybrid 互为 fallback；双方失败时保留无 speaker 主轨，不丢字幕文本。
+MOSS 使用官方 prompt 结构和 greedy decoding，显式记录 `prompt_len`、`generated_tokens`、`max_new_tokens` 与 stop reason。严格解析 `[start][Sxx]text[end]`，保留合法记录并把 malformed、空文本、逆序、越界、重复和零时长写入诊断；没有有效片段或尾部明确不完整时硬失败。rescue v1 只产出诊断候选，不能写入正式字幕。
 
-ASR、Qwen 对齐和 diarization 使用显式的 ASR_AUDIO_FILE、ALIGN_AUDIO_FILE、DIAR_AUDIO_FILE 边界，不再通过一个可变的全局 AUDIO_FILE 串扰。主轨是唯一可靠文本来源；没有独立文本与时间轴时，重叠证据只能作为 metadata，不复制主轨字幕到副轨。
+Qwen3-ForcedAligner 使用同一主环境的原生 Transformers API，只读 reference；单任务约束在 240 秒以内，失败、零 span 或越界回退 MOSS 粗时间戳并标记 fallback。后处理统一消费 `words` 字段。没有独立文本、独立时间证据和正时长时，重叠语音只保留 metadata，不复制主字幕到第二条 ASS Dialogue。
 
-## 高级基准
+## 运行产物与状态
 
-Notebook 末尾有一个默认关闭的高级区域。普通顺序执行不会触发矩阵；只有填写 BENCHMARK_RUN_ID 和 BENCHMARK_SAMPLE_MANIFEST 后才运行。私有媒体、人工 ASS/RTTM、candidate 输出和诊断包写入：
+每次运行使用 `/content/subtitle-generator-runs/<run_id>/` 和输入/reference hash、语言、热词 hash、模型 revision、VAD、长音频与增强配置构成的 `run_fingerprint`。所有阶段使用统一 envelope：`schema_version`、`run_id`、`run_fingerprint`、`stage`、`status`、`created_at`、`summary`、`metrics`、稳定 ID 的 warnings/errors 和 artifacts。JSON 采用 `.tmp` 写入后 rename。
 
-/content/drive/MyDrive/subtitle-generator-benchmarks/<run_id>/
+必须检查的产物包括：`run_manifest.json`、`diagnostics_index.json`、`audio_preprocess_diagnostics.json`、`vad_activity.json`、`vad_diagnostics.json`、`moss_raw_output.txt`、MOSS raw/normalized/diagnostics/rescue 文件、`aligned_segments.json`、`alignment_diagnostics.json`、`speaker_stitch_diagnostics.json`、`final_items.json`、gap/postprocess/export diagnostics、`output.srt`、`output.ass`、summary JSON/Markdown 和两个 diagnostics ZIP。
 
-固定路线和顺序如下：
-
-1. 阶段 A：固定 Whisper/Qwen/current hybrid，比较 raw、当前 BS-RoFormer、htdemucs_ft。
-2. 阶段 B：冻结同一 raw 转录与 Qwen token，在 BGM/高重叠样本比较 NeMo clustering 与 SortFormer offline 的 raw/Demucs diarization。
-3. 阶段 C：相同原音频、人数先验和 tokens，比较 NeMo clustering、NeMo MSDD、pyannote、current hybrid、SortFormer standalone、hybrid + SortFormer overlap-only。阶段 B 晋级后才追加 Demucs diar stem hybrid。
-4. 完整节目：只比较 current NeMo chunk/stitching、current hybrid、SortFormer streaming。
-5. holdout 端到端：只运行 current auto + current hybrid、最佳 ASR stem + current hybrid、最佳 ASR stem + overlap-only 辅助和已晋级 diar stem。
-
-Demucs 路线优先复用隔离的 audio-separator==0.44.5 环境，从固定模型列表解析唯一的 htdemucs_ft 文件名；结果记录模型 ID、实际文件名和 SHA256。所有 stem 都转换为 16 kHz mono WAV，并检查非空、削波和相对原音频不超过 0.050 秒的时长漂移。高级 manifest 的 `speaker_count` 接受空值或 1–10；SortFormer offline/streaming checkpoint 仍只支持最多 4 人，因此已知大于 4 人的 SortFormer 及 `hybrid_sortformer_overlap` variant 会返回 `status=skipped` 和明确的 unsupported speaker-count 原因，不会失败、fallback 或压成 4 类。
-
-基准输出包括 benchmark_manifest.json、benchmark_results.jsonl、benchmark_summary.csv、各 variant 的 ASS/RTTM/诊断和可下载 benchmark_bundle.zip。失败或 fallback variant 不参与均值，且不能冒充晋级成绩。结论只能是 reject、needs_more_data 或 promote_experimental，不会自动修改普通默认。
-
-人工 ASS 的 Name 作为稳定 speaker ID；STAFF 默认忽略；重叠发言必须是独立 Dialogue。基准辅助逻辑与 ass-compare-diagnostics 的匹配、coverage、mismatch window 和短间隙语义保持一致。
+compact ZIP 只允许 `compact_safe` 元数据，不含 transcript、媒体、绝对私有路径、自定义热词明文或 token/cookie。private ZIP 可包含字幕和分段文本，但默认排除原始及增强媒体。`partial`、`fallback`、`failed`、`skipped` 必须传播到摘要、导出和 benchmark；不能伪装成 clean。
 
 ## 使用与验证边界
 
-1. 在 Colab 启用 GPU，按 Notebook 顺序运行初始化、文件选择、普通参数和主流程单元。
-2. 运行模型加载、转写、Qwen 对齐、diarization、finalize/export，然后下载 SRT/ASS。
-3. 高级基准只在私有样本 manifest 完整且需要时运行；不要把私有媒体、ASS、RTTM 或生成输出提交到仓库。
-4. 生成成功不等于字幕正确：检查首尾覆盖、重复文本、speaker 切换、重叠 Dialogue 和 subtitle_gap_diagnostics.json。
+1. 在新鲜 Colab T4 中按 Notebook 顺序执行；模型阶段严格串行：Silero CPU → 可选 ClearVoice 子进程 → MOSS GPU → Qwen GPU → 后处理。
+2. 本地每次 Notebook 修改后运行 `python3 -m json.tool subtitle_generator.ipynb`、去除 magics/shell 后的全部 code cell compile、粒度统计和旧关键词零残留检查。
+3. 真实验收覆盖短反应、重叠语音、长静音、尾音、30–60、60–85、90–120 分钟、OOM/截断、malformed parser、stale state、Qwen zero span 和 ClearVoice drift；指标至少包含 CER、cpCER、ASS coverage、DER、speaker-change F1、token-speaker accuracy、overlap F1、short-reaction recall、fragmentation/false merge 与资源用量。
+4. 本机没有可用 Colab T4 和私有样本，因此本仓库内的 JSON/AST/合成结果不代表真实模型质量、T4 显存、长音频尾部覆盖或 ClearVoice/Qwen 实际可用性。
 
-本地 JSON/AST/纯函数测试不能证明真实 Colab GPU、Demucs、pyannote、NeMo、SortFormer 或私有样本流水线成功。模型相关改动必须按 docs/runbooks/notebook-validation.md 执行新鲜 T4 验证。`hybrid_diarization_diagnostics.json` 至少区分 requested count、pyannote/NeMo 实际收到的约束、各后端 observed count、global effective count、risk、最终 profile、最终 diar route 和 SortFormer skip reason。
-
-## 开发文档
-
-- docs/architecture.md：普通流水线、输入边界、fallback 与基准产物。
-- docs/decisions/ADR-0001-colab-notebook-delivery.md：单 Notebook 交付决策。
-- docs/decisions/ADR-0002-speaker-overlap-backends.md：说话人后端、Demucs 和 SortFormer 决策。
-- docs/runbooks/notebook-validation.md：静态、本地行为和新鲜 Colab 验证矩阵。
+架构细节见 [docs/architecture.md](docs/architecture.md)，静态与 Colab 验收见 [docs/runbooks/notebook-validation.md](docs/runbooks/notebook-validation.md)，决策记录见 [docs/decisions/ADR-0003-moss-native-pipeline.md](docs/decisions/ADR-0003-moss-native-pipeline.md)。
