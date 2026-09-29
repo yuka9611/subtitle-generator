@@ -6,9 +6,9 @@
 
 ## 使用
 
-1. 在 Colab 中选择 GPU 运行时。Notebook 已按当前 Python 3.13 环境调整依赖；首次初始化会安装/校验 Numba、Transformers、pyannote.audio、MOSS 等组件。
+1. 在 Colab 中选择当前 GPU 运行时。Notebook 会保留 Colab 预装的 NumPy/SciPy/Numba/Torch/Transformers 栈，只安装缺失的附加依赖，并在安装前后校验 ABI 是否一致。
 2. 配置 `HF_TOKEN`（pyannote 全局说话人识别需要）：先打开 https://huggingface.co/pyannote/speaker-diarization-community-1 点击 **Agree and access repository** 接受许可，再在 https://huggingface.co/settings/tokens 创建 **Fine-grained** Access Token，勾选 **Read access** 与 **Access to public gated repositories / gated models**，最后在 Colab 右侧 **🔑 Secrets** 新建 `HF_TOKEN` 并打开本 Notebook 的访问开关。
-3. 按顺序运行 Notebook（未配置 `HF_TOKEN` 时会自动回退到 MOSS 拼接 + 后处理合并，不会中断）。初始化阶段不再把 pandas 降级到 2.2.2；Numba 固定为 0.61.2，以同时满足 Colab 的 cuDF/cuML、PyTensor 与 MOSS，并兼容 Python 3.13。
+3. 按顺序运行 Notebook（未配置 `HF_TOKEN` 时会自动回退到 MOSS 拼接 + 后处理合并，不会中断）。MOSS 本体使用 `--no-deps` 安装，避免 pip 重新解析并改写 NumPy/Numba/SciPy/Transformers。若初始化提示 NumPy/SciPy 为混合版本，请删除当前 Colab 运行时后重新连接，再从最新 notebook 的初始化单元开始。
 4. 选择音频或视频。
 5. 设置语言、热词和预期说话人数。
 6. 下载与视频同名的 SRT/ASS 或诊断包。
