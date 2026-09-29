@@ -6,9 +6,9 @@
 
 ## 使用
 
-1. 在 Colab 中选择当前 GPU 运行时。Notebook 会保留 Colab 预装的 NumPy/SciPy/Numba/Torch/Transformers 栈，只安装缺失的附加依赖，并在安装前后校验 ABI 是否一致。
+1. 在 Colab 中选择当前 GPU 运行时。若 Colab 预装 NumPy 低于 pyannote 4 所需的 2.2.2，初始化会先将 NumPy 固定到 2.2.6 并自动重启一次 kernel；重连后再次运行全部单元格即可。其余 SciPy/Numba/Torch/Transformers 保持 Colab 配套版本。
 2. 配置 `HF_TOKEN`（pyannote 全局说话人识别需要）：先打开 https://huggingface.co/pyannote/speaker-diarization-community-1 点击 **Agree and access repository** 接受许可，再在 https://huggingface.co/settings/tokens 创建 **Fine-grained** Access Token，勾选 **Read access** 与 **Access to public gated repositories / gated models**，最后在 Colab 右侧 **🔑 Secrets** 新建 `HF_TOKEN` 并打开本 Notebook 的访问开关。
-3. 按顺序运行 Notebook（未配置 `HF_TOKEN` 时会自动回退到 MOSS 拼接 + 后处理合并，不会中断）。MOSS 本体使用 `--no-deps` 安装，避免 pip 重新解析并改写 NumPy/Numba/SciPy/Transformers。若初始化提示 NumPy/SciPy 为混合版本，请删除当前 Colab 运行时后重新连接，再从最新 notebook 的初始化单元开始。
+3. 按顺序运行 Notebook（未配置 `HF_TOKEN` 时会自动回退到 MOSS 拼接 + 后处理合并，不会中断）。pyannote 核心子依赖固定到与 NumPy 2.2.x 兼容的一组版本，MOSS 本体使用 `--no-deps` 安装。若初始化提示内存/磁盘 NumPy 或 SciPy 版本不一致，请删除当前 Colab 运行时后重新连接。
 4. 选择音频或视频。
 5. 设置语言、热词和预期说话人数。
 6. 下载与视频同名的 SRT/ASS 或诊断包。
