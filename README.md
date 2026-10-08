@@ -13,6 +13,8 @@
 5. 设置语言、热词和预期说话人数。
 6. 下载与视频同名的 SRT/ASS 或诊断包。
 
+`ja` 使用日语原文转写提示。每个 MOSS 推理单元（包括 Rescue）都会检查疑似整段英语翻译：正文的拉丁字母占比至少 95%，且达到 80 个拉丁字母，或达到 48 个拉丁字母及 8 个词时，先换提示重试一次；持续异常的主识别单元继续缩短分块，无法再拆分时停止，Rescue 异常结果不进入正式字幕。短英文词、专有名词和正常日英混说通常保留。这是字符启发式，不能判断音频里是否确实存在长英语发言，也不能证明日文转写准确；检查过程记录在 `moss_language_diagnostics.json`。改变语言或语言提示开关后，需要重新运行参数、参考音频及后续单元。
+
 预期说话人数：留空为自动；整数 1–99 会把最终说话人固定为该数量；`8+` 表示至少 8 人。人数由 pyannote community-1 在整段音频上全局约束（`num_speakers` / `min_speakers=8` / 自动），再把 MOSS 各分块的 local speaker 按时间 overlap 映射到全局 `S01…S0N`；检测到的人数不足目标时不虚构，保留实际人数并记录警告。pyannote 不可用时回退到证据拼接 + 确定性合并。热词预设（原神/星铁）已扩充为游戏内专有名词（概念、地名、人名及日语声优名）。ClearVoice 默认关闭。
 
 详细架构和验证要求见 [docs/architecture.md](docs/architecture.md) 与 [docs/runbooks/notebook-validation.md](docs/runbooks/notebook-validation.md)。
